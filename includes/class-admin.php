@@ -102,7 +102,7 @@ class Admin
             <?php $this->print_notice(); ?>
 
             <h2><?php esc_html_e('Add / Update Product', 'll-self-hosted-license-manager'); ?></h2>
-            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <?php wp_nonce_field('llshlm_save_product'); ?>
                 <input type="hidden" name="action" value="llshlm_save_product" />
 
@@ -120,10 +120,10 @@ class Admin
                         <td><input id="llshlm_version" class="regular-text" name="version" placeholder="1.0.0" required /></td>
                     </tr>
                     <tr>
-                        <th scope="row"><label for="llshlm_package_url"><?php esc_html_e('ZIP Package URL', 'll-self-hosted-license-manager'); ?></label></th>
+                        <th scope="row"><label for="llshlm_package_zip"><?php esc_html_e('ZIP Package File', 'll-self-hosted-license-manager'); ?></label></th>
                         <td>
-                            <input id="llshlm_package_url" class="regular-text" name="package_url" placeholder="https://example.com/path/plugin.zip" required />
-                            <p class="description"><?php esc_html_e('Public or protected URL used by updater clients to download latest plugin ZIP.', 'll-self-hosted-license-manager'); ?></p>
+                            <input id="llshlm_package_zip" type="file" name="package_zip" accept=".zip,application/zip" />
+                            <p class="description"><?php esc_html_e('Upload the plugin ZIP file. It will be stored in WordPress uploads and used by updater clients.', 'll-self-hosted-license-manager'); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -363,17 +363,40 @@ class Admin
 
         check_admin_referer('llshlm_save_product');
 
-        $slug        = sanitize_title((string) wp_unslash($_POST['slug'] ?? ''));
-        $name        = sanitize_text_field((string) wp_unslash($_POST['name'] ?? ''));
-        $version     = sanitize_text_field((string) wp_unslash($_POST['version'] ?? ''));
-        $package_url = esc_url_raw((string) wp_unslash($_POST['package_url'] ?? ''));
-        $requires    = sanitize_text_field((string) wp_unslash($_POST['requires'] ?? ''));
+        $slug         = sanitize_title((string) wp_unslash($_POST['slug'] ?? ''));
+        $name         = sanitize_text_field((string) wp_unslash($_POST['name'] ?? ''));
+        $version      = sanitize_text_field((string) wp_unslash($_POST['version'] ?? ''));
+        $package_url  = '';
+        $requires     = sanitize_text_field((string) wp_unslash($_POST['requires'] ?? ''));
         $requires_php = sanitize_text_field((string) wp_unslash($_POST['requires_php'] ?? ''));
-        $tested      = sanitize_text_field((string) wp_unslash($_POST['tested'] ?? ''));
-        $sections    = wp_kses_post((string) wp_unslash($_POST['sections'] ?? ''));
+        $tested       = sanitize_text_field((string) wp_unslash($_POST['tested'] ?? ''));
+        $sections     = wp_kses_post((string) wp_unslash($_POST['sections'] ?? ''));
 
-        if ('' === $slug || '' === $name || '' === $version || '' === $package_url) {
+        if ('' === $slug || '' === $name || '' === $version) {
             $this->redirect('llshlm-products', __('Please fill all required product fields.', 'll-self-hosted-license-manager'), false);
+        }
+
+        $has_upload = isset($_FILES['package_zip']) && is_array($_FILES['package_zip']) && ! empty($_FILES['package_zip']['name']);
+        if ($has_upload) {
+            if (! function_exists('wp_handle_upload')) {
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+            }
+
+            $uploaded = wp_handle_upload(
+                $_FILES['package_zip'],
+                [
+                    'test_form' => false,
+                    'mimes'     => [
+                        'zip' => 'application/zip',
+                    ],
+                ]
+            );
+
+            if (isset($uploaded['error'])) {
+                $this->redirect('llshlm-products', __('ZIP upload failed: ', 'll-self-hosted-license-manager') . sanitize_text_field((string) $uploaded['error']), false);
+            }
+
+            $package_url = esc_url_raw((string) ($uploaded['url'] ?? ''));
         }
 
         $existing = get_posts([
@@ -386,11 +409,18 @@ class Admin
 
         if ($existing) {
             $product_id = (int) $existing[0]->ID;
+            if ('' === $package_url) {
+                $package_url = (string) get_post_meta($product_id, '_llshlm_package_url', true);
+            }
             wp_update_post([
                 'ID'         => $product_id,
                 'post_title' => $name,
             ]);
         } else {
+            if ('' === $package_url) {
+                $this->redirect('llshlm-products', __('Please upload a ZIP package file.', 'll-self-hosted-license-manager'), false);
+            }
+
             $product_id = wp_insert_post([
                 'post_type'   => Post_Types::PRODUCT,
                 'post_title'  => $name,
