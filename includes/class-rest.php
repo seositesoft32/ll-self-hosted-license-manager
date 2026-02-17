@@ -243,8 +243,72 @@ class Rest
             ], 500);
         }
 
-        wp_redirect(esc_url_raw($package), 302);
+        $local_file = $this->local_file_from_url($package);
+        if ('' !== $local_file) {
+            $served = $this->serve_zip_file($local_file);
+            if ($served) {
+                exit;
+            }
+        }
+
+        wp_safe_redirect(esc_url_raw($package), 302);
         exit;
+    }
+
+    private function local_file_from_url(string $url): string
+    {
+        $url = esc_url_raw($url);
+        if ('' === $url) {
+            return '';
+        }
+
+        $uploads = wp_upload_dir();
+        $baseurl = (string) ($uploads['baseurl'] ?? '');
+        $basedir = (string) ($uploads['basedir'] ?? '');
+
+        if ('' !== $baseurl && '' !== $basedir && 0 === strpos($url, $baseurl)) {
+            $relative = ltrim(substr($url, strlen($baseurl)), '/\\');
+            $path     = wp_normalize_path(trailingslashit($basedir) . $relative);
+
+            if (is_file($path) && is_readable($path)) {
+                return $path;
+            }
+        }
+
+        return '';
+    }
+
+    private function serve_zip_file(string $path): bool
+    {
+        $path = wp_normalize_path($path);
+        if ('' === $path || ! is_file($path) || ! is_readable($path)) {
+            return false;
+        }
+
+        if (function_exists('nocache_headers')) {
+            nocache_headers();
+        }
+
+        header('Content-Description: File Transfer');
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . basename($path) . '"');
+        header('Content-Length: ' . (string) filesize($path));
+
+        $handle = fopen($path, 'rb');
+        if (false === $handle) {
+            return false;
+        }
+
+        while (! feof($handle)) {
+            $buffer = fread($handle, 8192);
+            if (false === $buffer) {
+                break;
+            }
+            echo $buffer;
+        }
+
+        fclose($handle);
+        return true;
     }
 
     private function find_license(string $code): ?\WP_Post
