@@ -266,12 +266,53 @@ class Rest
         $baseurl = (string) ($uploads['baseurl'] ?? '');
         $basedir = (string) ($uploads['basedir'] ?? '');
 
-        if ('' !== $baseurl && '' !== $basedir && 0 === strpos($url, $baseurl)) {
+        if ('' === $basedir) {
+            return '';
+        }
+
+        if ('' !== $baseurl && 0 === strpos($url, $baseurl)) {
             $relative = ltrim(substr($url, strlen($baseurl)), '/\\');
             $path     = wp_normalize_path(trailingslashit($basedir) . $relative);
-
             if (is_file($path) && is_readable($path)) {
                 return $path;
+            }
+        }
+
+        $url_path     = (string) wp_parse_url($url, PHP_URL_PATH);
+        $baseurl_path = (string) wp_parse_url($baseurl, PHP_URL_PATH);
+
+        if ('' !== $url_path && '' !== $baseurl_path && 0 === strpos($url_path, $baseurl_path)) {
+            $relative = ltrim(substr($url_path, strlen($baseurl_path)), '/\\');
+            $path     = wp_normalize_path(trailingslashit($basedir) . $relative);
+            if (is_file($path) && is_readable($path)) {
+                return $path;
+            }
+        }
+
+        $uploads_marker = '/wp-content/uploads/';
+        $marker_pos     = strpos($url_path, $uploads_marker);
+        if (false !== $marker_pos && defined('WP_CONTENT_DIR')) {
+            $relative = ltrim(substr($url_path, $marker_pos + strlen($uploads_marker)), '/\\');
+            $path     = wp_normalize_path(trailingslashit((string) WP_CONTENT_DIR) . 'uploads/' . $relative);
+            if (is_file($path) && is_readable($path)) {
+                return $path;
+            }
+        }
+
+        $basename = basename($url_path);
+        if ('' !== $basename && preg_match('/\.zip$/i', $basename)) {
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($basedir, \FilesystemIterator::SKIP_DOTS)
+            );
+
+            foreach ($iterator as $file) {
+                if (! $file instanceof \SplFileInfo) {
+                    continue;
+                }
+
+                if (strtolower($file->getFilename()) === strtolower($basename) && $file->isFile() && $file->isReadable()) {
+                    return wp_normalize_path($file->getPathname());
+                }
             }
         }
 
